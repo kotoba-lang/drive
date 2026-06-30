@@ -1,9 +1,12 @@
 # drive
 
-Portable CLJC drive object workspace model for `drive.gftd.ai`.
+[![CI](https://github.com/kotoba-lang/drive/actions/workflows/ci.yml/badge.svg)](https://github.com/kotoba-lang/drive/actions/workflows/ci.yml)
 
-Drive items are plain EDN folders and files. File bytes stay outside the model as
-content-addressed object refs.
+Portable CLJC model for kotoba-lang/drive.
+
+Pages editor: https://kotoba-lang.github.io/drive/
+
+The Pages UI is local to kotoba-lang and does not redirect to external hosts.
 
 ## Test
 
