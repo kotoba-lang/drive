@@ -5,8 +5,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
-      - run: clojure -X:test
+      - run: clojure -M:test
       - run: clojure -M:lint
+      - name: Compile bounded drive for Web and Wasm
+        run: |
+          mkdir -p target/kotoba
+          clojure -M:kotoba compile test/drive/bounded_conformance.kotoba --source-path src \
+            --target js-browser --output target/kotoba/drive.mjs
+          clojure -M:kotoba compile test/drive/bounded_conformance.kotoba --source-path src \
+            --target wasm32-browser --output target/kotoba/drive.wasm
+      - name: Execute bounded drive conformance
+        run: |
+          compiler_src="$(clojure -Spath -M:kotoba | tr ':' '\n' | grep '/compiler/' | head -1)"
+          test -n "$compiler_src"
+          node scripts/verify-kotoba.mjs target/kotoba/drive.mjs \
+            target/kotoba/drive.wasm "$(dirname "$compiler_src")/runtime/browser-host.mjs"
