@@ -12,6 +12,30 @@ Titles, media types, content/object references, and arbitrary attribute maps
 are intentionally not reinterpreted by the bounded profile; consumers needing
 those values continue to use the CLJC oracle or an explicit host boundary.
 
+## Content-addressed references
+
+`drive` lets the caller choose an object reference — "a content hash, a uuid,
+a path" — and two of those choices behave differently from the third. When
+the reference is derived from the bytes, two items holding one PDF hold one
+reference, and the library's two safety rules both had to learn that.
+
+`write-item` refused a reference already in use, because filing new content
+under an existing one replaces an earlier version's bytes while the history
+saying otherwise sits in `:drive/versions`. It now allows it **when the bytes
+are the same bytes** — compared against what is stored rather than taken on
+the caller's word, since a caller trusted to say "this is content-addressed"
+is trusted with exactly what the guard exists to not trust. Different content
+under a reference in use is refused as before.
+
+`forget-item` deleted every reference the item held. It now takes
+`:keep-ref?`, a predicate over references that must not be deleted, and
+reports `:kept`. Nothing here can work that out: this function is given one
+item, and the other holder may be in a different workspace entirely — only
+the application holding all of them can answer. Without it a Drive that
+deduplicated by content would delete a colleague's file when you emptied your
+trash, and the failure would surface much later as a download that used to
+work.
+
 ## Folders
 
 `create-folder` and a `:drive/parent-id` were here from the start, and
