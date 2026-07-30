@@ -10,6 +10,24 @@
 
   So the seam is here, next to the rules it has to obey.
 
+  ## Bytes are a vector of unsigned ints
+
+  Across `IObjectStore`, in both directions. The protocol did not say so at
+  first, and within hours of it existing there were two implementations that
+  disagreed: `drive.store.memory` and `drive.store.fs` pass vectors, and a
+  Filecoin-backed store in `cloud-itonami-app` passes `byte[]`. Both are
+  reasonable and neither is wrong — what was wrong was the protocol not
+  saying.
+
+  Unstated, the mismatch does not surface at the seam. It surfaces in whoever
+  called `read-item`, as bytes that are a vector on one deployment and an
+  array on another, and the code that works on both is code someone had to
+  find out they needed.
+
+  So it is stated, and `store-of` normalises both ways: a backend written
+  against arrays still fits, and a consumer sees one shape whichever backend
+  is behind it.
+
   ## What a store is not allowed to decide
 
   An `IObjectStore` is four operations over opaque references. It does not
@@ -56,6 +74,20 @@
 (defn- refuse [reason data]
   (merge {:ok? false :reason reason} data))
 
+(defn ->bytes
+  "Whatever a store handed back → a vector of unsigned ints.
+
+  `nil` stays `nil`: a missing object is not an empty one, and flattening the
+  two here would undo the distinction `read-item` reports as `:no-content`
+  versus `:object-missing-from-store`."
+  [b]
+  (cond
+    (nil? b)        nil
+    (vector? b)     b
+    (sequential? b) (mapv #(bit-and (int %) 0xff) b)
+    (string? b)     b
+    :else           (mapv #(bit-and (int %) 0xff) (seq b))))
+
 ;; ── reading ─────────────────────────────────────────────────────────────────
 
 (defn readable?
@@ -90,7 +122,7 @@
       :else
       (if-let [ref (:drive/object-ref item)]
         (if-let [bytes (-get-object store ref)]
-          {:ok? true :bytes bytes :object-ref ref}
+          {:ok? true :bytes (->bytes bytes) :object-ref ref}
           ;; the model says these bytes exist and the store disagrees. Worth
           ;; its own reason: it is a broken node, not a permission answer.
           (refuse :object-missing-from-store {:item-id item-id :object-ref ref}))
@@ -114,7 +146,8 @@
         :else
         (if-let [ref (:drive/object-ref item)]
           (if-let [bytes (-get-object store ref)]
-            {:ok? true :bytes bytes :object-ref ref :role (:drive.share/role link)}
+            {:ok? true :bytes (->bytes bytes) :object-ref ref
+             :role (:drive.share/role link)}
             (refuse :object-missing-from-store {:item-id item-id :object-ref ref}))
           (refuse :no-content {:item-id item-id}))))
     (refuse :no-such-link {})))
@@ -226,10 +259,14 @@
   `delete-object` and `head-object`; wrapping them here means `drive` does not
   require it and it does not require `drive` — whoever builds the store
   depends on both, and that is the application."
-  [{:keys [get-object put-object delete-object exists?]}]
+  [{:keys [get-object put-object delete-object exists? bytes-out]
+    :or   {bytes-out identity}}]
   (reify IObjectStore
-    (-get-object [_ ref] (get-object ref))
-    (-put-object [_ ref bytes] (put-object ref bytes))
+    (-get-object [_ ref] (->bytes (get-object ref)))
+    ;; `:bytes-out` is how a backend that wants arrays says so. Default
+    ;; identity, because the protocol's shape is the vector — a backend
+    ;; needing something else converts, rather than every consumer.
+    (-put-object [_ ref bytes] (put-object ref (bytes-out bytes)))
     (-delete-object [_ ref] (delete-object ref))
     (-object-exists? [_ ref]
       (if exists? (exists? ref) (some? (get-object ref))))))
