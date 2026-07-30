@@ -12,6 +12,44 @@ Titles, media types, content/object references, and arbitrary attribute maps
 are intentionally not reinterpreted by the bounded profile; consumers needing
 those values continue to use the CLJC oracle or an explicit host boundary.
 
+## Folders
+
+`create-folder` and a `:drive/parent-id` were here from the start, and
+`effective-role` walked up the parents, so sharing a folder shared what was
+in it. What was missing was everything that reads the tree back:
+
+```clojure
+(ws/path ws "memo")            ; root → … → the item, a breadcrumb
+(ws/children ws "work" "alice"); what is directly inside, readable, untrashed
+(ws/descendants ws "work")     ; every id below, any depth
+(ws/move ws "memo" "root")     ; and the refusals that make it safe
+```
+
+**Trash is derived, not cascaded, and that is the whole design.** Trashing a
+folder by writing the flag onto every descendant means restoring it has to
+know which ones it wrote — a file already in the trash before its folder went
+there would come back out, restored by a fact about its parent. Recording
+which were cascaded is a second piece of state to keep in step with the
+first.
+
+`trashed?` asks instead: is this item, or anything above it, in the trash.
+Trashing a folder hides everything under it because the answer changes for
+all of them at once. Restoring reveals exactly what was visible before,
+because nothing else was ever touched. A file explicitly trashed inside a
+trashed folder stays trashed when the folder comes back, which is right and
+is only possible because the two flags are independent.
+
+`move` refuses to put a folder inside itself or its own descendant. A drag
+lands where it lands, so an interface will ask; the result would be a subtree
+detached from the root — invisible to a listing that walks down, unreachable
+by a breadcrumb that walks up, and marked wrong nowhere. The root refuses to
+be moved or trashed for the same kind of reason: trashing it would hide the
+entire Drive with no listing left to find it from.
+
+Moving a file into a shared folder shares it, and moving it out unshares it.
+That falls out of inheritance rather than being implemented, and it is tested
+because it is a permission change nobody performed.
+
 ## Where the bytes are
 
 `drive.object` is that host boundary, and it is in this library rather than in

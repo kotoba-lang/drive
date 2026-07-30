@@ -1,5 +1,6 @@
 (ns drive.workspace
   "Portable tenant Drive metadata: hierarchy, ACL, versions, trash and quota."
+  (:refer-clojure :exclude [ancestors descendants])
   (:require [clojure.string :as str]
             [drive.model :as model]))
 
@@ -89,15 +90,115 @@
                   (:drive.version/object-ref version))
         (assoc :drive.workspace/used-bytes next-used))))
 
+(defn ancestors
+  "Every id above `item-id`, nearest first, root last.
+
+  Guarded against a cycle rather than trusting there is none: `move` refuses
+  to make one, but a workspace is data and can arrive from anywhere. A loop
+  here would hang the process, which is a worse answer than a short list."
+  [ws item-id]
+  (loop [id (:drive/parent-id (item ws item-id)) seen #{} out []]
+    (if (or (nil? id) (contains? seen id))
+      out
+      (recur (:drive/parent-id (item ws id)) (conj seen id) (conj out id)))))
+
+(defn path
+  "The items from the root down to `item-id`, inclusive — a breadcrumb.
+
+  Titles rather than ids are the caller's business; this returns the items so
+  it does not have to guess which field is wanted."
+  [ws item-id]
+  (when (item ws item-id)
+    (conj (vec (reverse (map #(item ws %) (ancestors ws item-id))))
+          (item ws item-id))))
+
+(defn descendants
+  "Every id below `item-id`, at any depth.
+
+  By walking `:drive/children`, which is the structure being maintained,
+  rather than by scanning every item for a matching parent — the two agree
+  and the walk visits only the subtree."
+  [ws item-id]
+  (loop [queue (vec (:drive/children (item ws item-id))) seen #{} out []]
+    (if-let [id (first queue)]
+      (if (contains? seen id)
+        (recur (subvec (vec queue) 1) seen out)
+        (recur (into (subvec (vec queue) 1) (:drive/children (item ws id)))
+               (conj seen id)
+               (conj out id)))
+      out)))
+
+(defn trashed?
+  "Whether `item-id` is in the trash — its own flag, or any ancestor's.
+
+  **Derived rather than cascaded, and that is the whole design.** Trashing a
+  folder by writing the flag onto every descendant means restoring it has to
+  know which ones it wrote: a file already in the trash before its folder
+  went there would come back out, having been restored by a fact about its
+  parent. Recording which were cascaded is a second piece of state to keep in
+  step with the first.
+
+  Asking instead makes both operations exact. Trashing a folder hides
+  everything under it because the answer changes for all of them at once;
+  restoring reveals exactly what was visible before, because nothing else was
+  ever touched. A file explicitly trashed inside a trashed folder stays
+  trashed when the folder comes back — which is right, and is only possible
+  because the two flags are independent."
+  [ws item-id]
+  (boolean
+   (or (:drive/trashed? (item ws item-id))
+       (some #(:drive/trashed? (item ws %)) (ancestors ws item-id)))))
+
 (defn trash [ws item-id]
+  (when (= item-id (:drive.workspace/root-id ws))
+    (throw (ex-info "the root folder cannot be trashed" {:item-id item-id})))
   (assoc-in ws [:drive.workspace/items item-id :drive/trashed?] true))
 
 (defn restore [ws item-id]
   (assoc-in ws [:drive.workspace/items item-id :drive/trashed?] false))
 
+(defn move
+  "Put `item-id` inside `parent-id`.
+
+  Refuses to move a folder into itself or into its own descendant. That is
+  not a strange thing for a user interface to ask for — a drag lands where it
+  lands — and the result would be a subtree detached from the root, invisible
+  to a listing that walks down and unreachable by a breadcrumb that walks up,
+  with nothing marked wrong anywhere."
+  [ws item-id parent-id]
+  (ensure-parent ws parent-id)
+  (when-not (item ws item-id)
+    (throw (ex-info "drive item not found" {:item-id item-id})))
+  (when (= item-id (:drive.workspace/root-id ws))
+    (throw (ex-info "the root folder cannot be moved" {:item-id item-id})))
+  (when (or (= item-id parent-id)
+            (contains? (set (descendants ws item-id)) parent-id))
+    (throw (ex-info "a folder cannot contain itself"
+                    {:item-id item-id :parent-id parent-id})))
+  (let [from (:drive/parent-id (item ws item-id))]
+    (cond-> ws
+      from (update-in [:drive.workspace/items from :drive/children]
+                      (fn [children] (vec (remove #{item-id} children))))
+      true (update-in [:drive.workspace/items parent-id :drive/children]
+                      (fnil conj []) item-id)
+      true (assoc-in [:drive.workspace/items item-id :drive/parent-id] parent-id))))
+
+(defn children
+  "What is directly inside `folder-id` and readable, trash excluded.
+
+  In the order the folder records, which is the order things were put there —
+  not sorted, because sorting is a question about a particular listing and
+  this is the structure."
+  [ws folder-id principal-id]
+  (->> (:drive/children (item ws folder-id))
+       (map #(item ws %))
+       (filter #(and % (not (trashed? ws (:drive/id %)))
+                     (can-read? ws (:drive/id %) principal-id)))
+       vec))
+
 (defn visible-items [ws principal-id]
   (->> (:drive.workspace/items ws) vals
-       (filter #(and (not (:drive/trashed? %))
+       (filter #(and (not (trashed? ws (:drive/id %)))
                      (can-read? ws (:drive/id %) principal-id))) vec))
 
 (defn search [ws principal-id query]
