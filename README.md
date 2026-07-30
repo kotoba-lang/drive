@@ -52,6 +52,11 @@ Four rules that a straightforward implementation gets wrong:
 - **A new version needs a new object reference.** Reusing one silently
   replaces an earlier version's bytes while the history saying otherwise stays
   in `:drive/versions`.
+- **A version records who wrote it, and the caller does not get to say who.**
+  `:drive.version/author` is the principal `write-item` just checked against
+  the ACL. An author passed in `opts` would be a history the caller can
+  write; and the moment an item can be shared, a history that cannot say
+  which of two writers made a version is a history of nothing.
 - **Forgetting returns the quota.** A workspace counting bytes nobody can
   reach fills up for no reason anyone can see.
 

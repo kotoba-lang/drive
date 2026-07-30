@@ -178,6 +178,13 @@
   to generate, and that means randomness or hashing in a namespace that has
   neither.
 
+  The version records `principal-id` as `:drive.version/author`. Not as an
+  option, because an author the caller passes is a history the caller can
+  write — and the value is already here, having just been checked against
+  the ACL. Before an item could be shared this was redundant; the moment two
+  principals can write one item, a history that cannot say which of them did
+  is a history of nothing.
+
   Nothing is written until permission, quota and reference are all settled."
   [workspace store item-id principal-id bytes
    {:keys [object-ref created-at] :as _opts}]
@@ -215,9 +222,15 @@
         (-put-object store object-ref bytes)
         {:ok? true
          :object-ref object-ref
+         ;; The author is the principal this write was permitted for, not a
+         ;; value the caller may name. A version that recorded whoever the
+         ;; caller said wrote it would be a history that can be written to
+         ;; say anything, and the permission answer above is the only thing
+         ;; here that knows who this actually was.
          :workspace (ws/add-version workspace item-id
                                     (cond-> {:drive.version/object-ref object-ref
-                                             :drive.version/size-bytes size}
+                                             :drive.version/size-bytes size
+                                             :drive.version/author principal-id}
                                       created-at (assoc :drive.version/created-at created-at)))}))))
 
 (defn forget-item
