@@ -1,5 +1,10 @@
 {:paths ["src" "resources"]
- :deps {}
+ ;; The byte shape crossing IObjectStore is not drive's to define — see
+ ;; drive.object's docstring. kotoba.bytes owns the word and states the
+ ;; contract; this is drive saying it means the same thing by it.
+ :deps {io.github.kotoba-lang/bytes
+        {:git/url "https://github.com/kotoba-lang/bytes.git"
+         :git/sha "96ac992c7b0da54af41e8d40eaf23a4541a23d09"}}
  :aliases
  {:test {:extra-paths ["test"]
          :extra-deps {io.github.cognitect-labs/test-runner

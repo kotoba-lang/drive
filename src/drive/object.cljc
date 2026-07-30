@@ -24,9 +24,19 @@
   array on another, and the code that works on both is code someone had to
   find out they needed.
 
-  So it is stated, and `store-of` normalises both ways: a backend written
-  against arrays still fits, and a consumer sees one shape whichever backend
-  is behind it.
+  **What a byte is, though, is not drive's to decide.** `kotoba.bytes` exists
+  for that, says the same thing in its own README, and was already a
+  dependency of the protocol libraries around this one. Stating it a second
+  time here — as this namespace did for a day, with a private `->bytes` — is
+  how a workspace ends up with two definitions that can drift, which is the
+  failure this section is about. So the definition is `kotoba.bytes/->bytes`
+  and drive is one of its callers.
+
+  It is applied at two places, which is not redundancy. `store-of` is a
+  convenience; the contract is on `-get-object`, and a store written as a
+  bare `reify` never passes through the convenience. Normalising only in
+  `store-of` would mean the protocol held for stores built one particular
+  way — which is not what a protocol is.
 
   ## What a store is not allowed to decide
 
@@ -58,7 +68,8 @@
   untouched, which is the safe direction: the model never claims bytes that
   are not there. The other order can strand an object nothing references, and
   that is the direction this deliberately does not take."
-  (:require [drive.workspace :as ws]))
+  (:require [kotoba.bytes :as b]
+            [drive.workspace :as ws]))
 
 (defprotocol IObjectStore
   "Bytes by opaque reference. Four operations, no opinions.
@@ -73,20 +84,6 @@
 
 (defn- refuse [reason data]
   (merge {:ok? false :reason reason} data))
-
-(defn ->bytes
-  "Whatever a store handed back → a vector of unsigned ints.
-
-  `nil` stays `nil`: a missing object is not an empty one, and flattening the
-  two here would undo the distinction `read-item` reports as `:no-content`
-  versus `:object-missing-from-store`."
-  [b]
-  (cond
-    (nil? b)        nil
-    (vector? b)     b
-    (sequential? b) (mapv #(bit-and (int %) 0xff) b)
-    (string? b)     b
-    :else           (mapv #(bit-and (int %) 0xff) (seq b))))
 
 ;; ── reading ─────────────────────────────────────────────────────────────────
 
@@ -122,7 +119,7 @@
       :else
       (if-let [ref (:drive/object-ref item)]
         (if-let [bytes (-get-object store ref)]
-          {:ok? true :bytes (->bytes bytes) :object-ref ref}
+          {:ok? true :bytes (b/->bytes bytes) :object-ref ref}
           ;; the model says these bytes exist and the store disagrees. Worth
           ;; its own reason: it is a broken node, not a permission answer.
           (refuse :object-missing-from-store {:item-id item-id :object-ref ref}))
@@ -146,7 +143,7 @@
         :else
         (if-let [ref (:drive/object-ref item)]
           (if-let [bytes (-get-object store ref)]
-            {:ok? true :bytes (->bytes bytes) :object-ref ref
+            {:ok? true :bytes (b/->bytes bytes) :object-ref ref
              :role (:drive.share/role link)}
             (refuse :object-missing-from-store {:item-id item-id :object-ref ref}))
           (refuse :no-content {:item-id item-id}))))
@@ -184,8 +181,13 @@
   Nothing is written until permission, quota and reference are all settled."
   [workspace store item-id principal-id bytes
    {:keys [object-ref created-at] :as _opts}]
-  (let [item (ws/item workspace item-id)
-        size (count bytes)]
+  ;; Normalised before it is measured, not just before it is stored. `count`
+  ;; on a string is characters, so a caller writing "日本語" would be charged 3
+  ;; against quota and store 9 — the quota would drift from the bytes it is
+  ;; supposed to be counting, in the direction that lets a workspace exceed it.
+  (let [bytes (b/->bytes bytes)
+        item  (ws/item workspace item-id)
+        size  (count bytes)]
     (cond
       (nil? item)                      (refuse :no-such-item {:item-id item-id})
       (:drive/trashed? item)           (refuse :item-is-trashed {:item-id item-id})
@@ -259,10 +261,23 @@
   `delete-object` and `head-object`; wrapping them here means `drive` does not
   require it and it does not require `drive` — whoever builds the store
   depends on both, and that is the application."
-  [{:keys [get-object put-object delete-object exists? bytes-out]
+  [{:keys [get-object put-object delete-object exists? bytes-out] :as fns
     :or   {bytes-out identity}}]
+  ;; A misspelled key is otherwise a store that answers `nil` to every read —
+  ;; indistinguishable, at the call site, from a backend that is simply empty,
+  ;; and it stays that way until someone wonders why nothing is ever there.
+  ;; Construction is the moment this is still cheap to say.
+  (when-let [missing (seq (remove #(ifn? (get fns %))
+                                  [:get-object :put-object :delete-object]))]
+    (throw (ex-info "store-of needs a function for each operation"
+                    {:missing (vec missing) :given (vec (keys fns))})))
+  (when-let [unknown (seq (remove #{:get-object :put-object :delete-object
+                                    :exists? :bytes-out}
+                                  (keys fns)))]
+    (throw (ex-info "store-of given a key it does not use"
+                    {:unknown (vec unknown)})))
   (reify IObjectStore
-    (-get-object [_ ref] (->bytes (get-object ref)))
+    (-get-object [_ ref] (b/->bytes (get-object ref)))
     ;; `:bytes-out` is how a backend that wants arrays says so. Default
     ;; identity, because the protocol's shape is the vector — a backend
     ;; needing something else converts, rather than every consumer.
