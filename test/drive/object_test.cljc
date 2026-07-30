@@ -198,3 +198,92 @@
     (testing "exists? falls back to a get when it is not supplied"
       (is (object/-object-exists? store "k"))
       (is (not (object/-object-exists? store "nope"))))))
+
+;; ── the byte contract ───────────────────────────────────────────────────────
+
+(deftest a-backend-that-speaks-arrays-still-fits
+  ;; found by a second implementation appearing: cloud-itonami-app's
+  ;; Filecoin store returns byte[] where drive.store.memory returns vectors.
+  ;; Both are reasonable; the protocol not saying which was not.
+  (let [held (atom {})
+        store (object/store-of
+               {:get-object    (fn [ref] (get @held ref))
+                :put-object    (fn [ref bs] (swap! held assoc ref bs))
+                :delete-object (fn [ref] (swap! held dissoc ref))
+                ;; a backend that wants arrays says so here
+                :bytes-out     (fn [v] #?(:clj  (byte-array (map unchecked-byte v))
+                                          :cljs (js/Uint8Array.from (into-array v))))})
+        w (-> (ws/workspace "acme" "alice" 100)
+              (ws/create-file "plan" "root" {} "alice"))
+        r (object/write-item w store "plan" "alice" [1 2 250] {:object-ref "k"})]
+    (is (:ok? r))
+    (is (= 3 (count (get @held "k"))))
+    (testing "and the consumer still sees a vector"
+      (let [got (object/read-item (:workspace r) store "plan" "alice")]
+        (is (vector? (:bytes got)))
+        (is (= [1 2 250] (:bytes got))
+            "including the byte above 127, which a signed array would report negative")))))
+
+(deftest the-normaliser-keeps-missing-and-empty-apart
+  (is (nil? (object/->bytes nil)))
+  (is (= [] (object/->bytes [])))
+  (is (= [1 2 250] (object/->bytes [1 2 250])))
+  (is (= [1 2 250] (object/->bytes (list 1 2 250))))
+  #?(:clj (is (= [1 2 250] (object/->bytes (byte-array [1 2 -6])))
+              "a byte array's negative bytes come back unsigned")))
+
+(defn- raw-array-store
+  "A store written by hand rather than through `store-of`.
+
+  This is the case `store-of`'s normalisation cannot cover, and the reason
+  `read-item` normalises too: a consumer may `reify IObjectStore` directly,
+  and the shape drive hands back must not depend on which way it was built.
+  Two controls passed before this existed, because every other test here went
+  through `store-of` and was normalised on the way in."
+  [held]
+  (reify object/IObjectStore
+    (-get-object [_ ref] (get @held ref))
+    (-put-object [_ ref bytes]
+      (swap! held assoc ref #?(:clj (byte-array (map unchecked-byte bytes))
+                               :cljs (js/Uint8Array.from (into-array bytes)))))
+    (-delete-object [_ ref] (swap! held dissoc ref))
+    (-object-exists? [_ ref] (contains? @held ref))))
+
+(deftest a-hand-written-store-is-normalised-by-read-item
+  (let [held  (atom {})
+        store (raw-array-store held)
+        w (-> (ws/workspace "acme" "alice" 100)
+              (ws/create-file "plan" "root" {} "alice"))
+        w (:workspace (object/write-item w store "plan" "alice" [7 8 200] {:object-ref "k"}))
+        r (object/read-item w store "plan" "alice")]
+    (is (not (vector? (object/-get-object store "k")))
+        "the store really does hand back something other than a vector")
+    (is (vector? (:bytes r)))
+    (is (= [7 8 200] (:bytes r))
+        "including the byte above 127, which a signed array reports negative")))
+
+(deftest share-link-reads-are-normalised-too
+  (let [held  (atom {})
+        store (raw-array-store held)
+        w (-> (ws/workspace "acme" "alice" 100)
+              (ws/create-file "plan" "root" {} "alice"))
+        w (:workspace (object/write-item w store "plan" "alice" [7 8 200] {:object-ref "k"}))
+        w (ws/create-share-link w "tok" "plan" :viewer 100)
+        r (object/read-via-share-link w store "tok" 50)]
+    (is (:ok? r))
+    (is (vector? (:bytes r)))
+    (is (= [7 8 200] (:bytes r)))))
+
+(deftest store-of-honours-the-contract-it-was-built-to-satisfy
+  ;; the contract is on the protocol, so a store built by `store-of` must meet
+  ;; it whether or not anything in this namespace is the caller. Without this,
+  ;; removing the normalisation there passes every other test, because
+  ;; read-item normalises again on the way out.
+  (let [held  (atom {"k" #?(:clj (byte-array [7 8 -56]) :cljs #js [7 8 200])})
+        store (object/store-of {:get-object    #(get @held %)
+                                :put-object    #(swap! held assoc %1 %2)
+                                :delete-object #(swap! held dissoc %)})]
+    (is (vector? (object/-get-object store "k")))
+    (is (= [7 8 200] (object/-get-object store "k")))
+    (is (nil? (object/-get-object store "absent"))
+        "and a missing object is still nil rather than an empty vector")))

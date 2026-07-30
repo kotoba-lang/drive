@@ -33,6 +33,14 @@ An `IObjectStore` is four operations over opaque references and knows nothing
 about principals, roles, share links, trash or quota. Everything in
 `drive.object` exists so that it is only reached after the answer is yes.
 
+**Bytes are a vector of unsigned ints, in both directions.** The protocol did
+not say so at first, and within hours there were two implementations that
+disagreed — `drive.store.memory` passes vectors and a Filecoin-backed store in
+another repository passes `byte[]`. Both are reasonable; the protocol not
+saying was not. Unstated, the mismatch surfaces in whoever called `read-item`
+rather than at the seam. `store-of` normalises both ways, and a backend that
+wants arrays says so with `:bytes-out`.
+
 Four rules that a straightforward implementation gets wrong:
 
 - **Trashed items are not readable.** `can-read?` says nothing about trash —
