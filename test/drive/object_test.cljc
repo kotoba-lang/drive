@@ -120,6 +120,31 @@
     (is (= 1 (count (:drive/versions (ws/item ws "plan")))))
     (is (= "obj-1" (:drive/object-ref (ws/item ws "plan"))))))
 
+(deftest a-version-records-who-wrote-it
+  (let [{:keys [ws store]} (fixture)
+        ws (ws/grant ws "plan" "bob" :editor)
+        ws (:workspace (object/write-item ws store "plan" "bob" bytes-b
+                                          {:object-ref "obj-2"}))
+        versions (:drive/versions (ws/item ws "plan"))]
+    (is (= ["alice" "bob"] (mapv :drive.version/author versions))
+        "the history says which of the two writers made each version")))
+
+(deftest the-author-is-the-principal-that-was-permitted
+  ;; Not a value the caller supplies. `opts` is ignored here on purpose: an
+  ;; author the caller can name is a history the caller can write.
+  (let [{:keys [ws store]} (fixture)
+        r (object/write-item ws store "plan" "alice" bytes-b
+                             {:object-ref "obj-2" :drive.version/author "mallory"})]
+    (is (= "alice" (:drive.version/author
+                    (peek (:drive/versions (ws/item (:workspace r) "plan"))))))))
+
+(deftest a-refused-write-records-no-author
+  (let [{:keys [ws store]} (fixture)
+        ws (ws/grant ws "plan" "bob" :viewer)
+        r  (object/write-item ws store "plan" "bob" bytes-b {:object-ref "obj-2"})]
+    (is (= :not-permitted (:reason r)))
+    (is (nil? (:workspace r)))))
+
 (deftest a-commenter-may-not-write
   (let [{:keys [ws store]} (fixture)
         ws (ws/grant ws "plan" "bob" :commenter)
