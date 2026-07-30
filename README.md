@@ -57,6 +57,12 @@ Four rules that a straightforward implementation gets wrong:
   the ACL. An author passed in `opts` would be a history the caller can
   write; and the moment an item can be shared, a history that cannot say
   which of two writers made a version is a history of nothing.
+- **There has to be a way to forget *some* of the history.** `add-version`
+  adds and nothing subtracts; trashing frees nothing and `forget-item` frees
+  everything, so without `prune-versions` the only way to reclaim a
+  heavily-edited document's past is to delete the document. `keep-count`
+  below 1 is refused — the newest version is the document, and a prune that
+  could take it is a delete under another name.
 - **Forgetting returns the quota.** A workspace counting bytes nobody can
   reach fills up for no reason anyone can see.
 

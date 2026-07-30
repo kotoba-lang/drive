@@ -365,3 +365,48 @@
     (is (= [7 8 200] (object/-get-object store "k")))
     (is (nil? (object/-get-object store "absent"))
         "and a missing object is still nil rather than an empty vector")))
+
+(deftest pruning-keeps-the-newest-and-returns-the-rest-to-the-quota
+  (let [{:keys [ws store]} (fixture)
+        ws (:workspace (object/write-item ws store "plan" "alice" bytes-b
+                                          {:object-ref "obj-2"}))
+        ws (:workspace (object/write-item ws store "plan" "alice" bytes-a
+                                          {:object-ref "obj-3"}))
+        before (:drive.workspace/used-bytes ws)
+        r (object/prune-versions ws store "plan" "alice" 1)]
+    (is (:ok? r))
+    (is (= 2 (:deleted r)))
+    (is (= 1 (:kept r)))
+    (is (= (+ (count bytes-a) (count bytes-b)) (:freed-bytes r)))
+    (is (= (- before (:freed-bytes r))
+           (:drive.workspace/used-bytes (:workspace r))))
+    ;; The bytes are gone from the store, and the newest are not.
+    (is (nil? (object/-get-object store "obj-1")))
+    (is (nil? (object/-get-object store "obj-2")))
+    (is (some? (object/-get-object store "obj-3")))
+    ;; And the document still reads.
+    (is (:ok? (object/read-item (:workspace r) store "plan" "alice")))))
+
+(deftest pruning-never-takes-the-current-version
+  (let [{:keys [ws store]} (fixture)]
+    (is (= :keep-count-too-low (:reason (object/prune-versions ws store "plan" "alice" 0))))
+    (is (= :keep-count-too-low (:reason (object/prune-versions ws store "plan" "alice" -1))))
+    ;; The newest version IS the document; a prune that could take it is a
+    ;; delete wearing another name, and forget-item is the one that says so.
+    (is (some? (object/-get-object store "obj-1")))))
+
+(deftest pruning-with-nothing-to-prune-frees-nothing-and-succeeds
+  (let [{:keys [ws store]} (fixture)
+        r (object/prune-versions ws store "plan" "alice" 5)]
+    (is (:ok? r))
+    (is (zero? (:deleted r)))
+    (is (zero? (:freed-bytes r)))
+    (is (= (:drive.workspace/used-bytes ws)
+           (:drive.workspace/used-bytes (:workspace r))))))
+
+(deftest pruning-needs-write-access
+  (let [{:keys [ws store]} (fixture)
+        ws (ws/grant ws "plan" "bob" :commenter)
+        r (object/prune-versions ws store "plan" "bob" 1)]
+    (is (= :not-permitted (:reason r)))
+    (is (some? (object/-get-object store "obj-1")) "and nothing was deleted on the way")))

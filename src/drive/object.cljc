@@ -264,6 +264,63 @@
                         (assoc-in [:drive.workspace/items item-id :drive/versions] [])
                         (update :drive.workspace/used-bytes #(max 0 (- % freed))))}))))
 
+(defn prune-versions
+  "Forget all but the newest `keep-count` versions of `item-id`.
+
+  The same rule as `forget-item` applied to fewer objects: delete the bytes,
+  return what they cost to the quota. It is here rather than in a consumer
+  for the reason everything in this namespace is — a caller doing it itself
+  would be reaching past the permission answer to the store, and would have
+  to get the arithmetic right a second time.
+
+  ## Why this has to exist
+
+  `add-version` adds and nothing subtracts. Trashing does not free anything
+  and `forget-item` frees everything, so until now the only way to reclaim a
+  heavily-edited document's history was to delete the document. A workspace
+  where the cost of editing only ever goes up is one that eventually stops
+  accepting writes for a reason its owner cannot act on.
+
+  ## What it refuses
+
+  `keep-count` below 1. The newest version is the document; a prune that
+  could take it is a delete wearing another name, and `forget-item` is the
+  one that says so out loud.
+
+  Nothing else. Pruning when there is nothing to prune succeeds and frees
+  zero, because a caller tidying up should not have to know in advance
+  whether there was anything to tidy."
+  [workspace store item-id principal-id keep-count]
+  (let [item (ws/item workspace item-id)]
+    (cond
+      (nil? item) (refuse :no-such-item {:item-id item-id})
+
+      (not (ws/can-write? workspace item-id principal-id))
+      (refuse :not-permitted {:item-id item-id :principal principal-id})
+
+      (or (not (int? keep-count)) (< keep-count 1))
+      (refuse :keep-count-too-low {:item-id item-id :keep-count keep-count})
+
+      :else
+      (let [versions (vec (:drive/versions item))
+            drop-n (max 0 (- (count versions) keep-count))
+            dropped (subvec versions 0 drop-n)
+            kept (subvec versions drop-n)
+            ;; The current object reference is whatever the newest kept
+            ;; version points at, and `keep-count` >= 1 means there is one.
+            ;; Deleting a reference the item still points at would leave the
+            ;; model claiming bytes that are not there.
+            refs (into #{} (comp (map :drive.version/object-ref) (filter some?)) dropped)
+            freed (reduce + 0 (keep :drive.version/size-bytes dropped))]
+        (doseq [ref refs] (-delete-object store ref))
+        {:ok? true
+         :deleted (count refs)
+         :kept (count kept)
+         :freed-bytes freed
+         :workspace (-> workspace
+                        (assoc-in [:drive.workspace/items item-id :drive/versions] kept)
+                        (update :drive.workspace/used-bytes #(max 0 (- % freed))))}))))
+
 ;; ── an adapter with no dependency ───────────────────────────────────────────
 
 (defn store-of
