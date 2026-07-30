@@ -5,6 +5,7 @@
   hands out someone else's file. That is why the seam is in this library
   rather than in each consumer: the rules only work if there is one of them."
   (:require [clojure.test :refer [deftest is testing]]
+            [kotoba.bytes :as b]
             [drive.object :as object]
             [drive.store.memory :as mem]
             [drive.workspace :as ws]))
@@ -224,13 +225,65 @@
         (is (= [1 2 250] (:bytes got))
             "including the byte above 127, which a signed array would report negative")))))
 
-(deftest the-normaliser-keeps-missing-and-empty-apart
-  (is (nil? (object/->bytes nil)))
-  (is (= [] (object/->bytes [])))
-  (is (= [1 2 250] (object/->bytes [1 2 250])))
-  (is (= [1 2 250] (object/->bytes (list 1 2 250))))
-  #?(:clj (is (= [1 2 250] (object/->bytes (byte-array [1 2 -6])))
-              "a byte array's negative bytes come back unsigned")))
+(deftest drive-defers-to-kotoba-bytes-rather-than-deciding
+  ;; The coercion is tested where it lives (kotoba.bytes). What this pins is
+  ;; that drive calls it: a private copy lived in drive.object for a day and
+  ;; had already drifted — it passed strings through unchanged, so a value
+  ;; that was not a byte vector could leave a seam that says everything
+  ;; crossing it is one.
+  (let [held  (atom {"k" #?(:clj (byte-array [7 8 -56]) :cljs #js [7 8 200])})
+        store (object/store-of {:get-object    #(get @held %)
+                                :put-object    #(swap! held assoc %1 %2)
+                                :delete-object #(swap! held dissoc %)})]
+    (is (= (b/->bytes (get @held "k")) (object/-get-object store "k"))
+        "what drive hands back is what kotoba.bytes says it is")
+    (is (nil? (object/-get-object store "absent"))
+        "and absent is still not empty")))
+
+(deftest quota-counts-bytes-not-characters
+  ;; `count` on a string is characters. Charging 3 for a value that occupies 9
+  ;; lets a workspace past a limit it is still reporting as enforced, so the
+  ;; write side normalises before it measures, not only before it stores.
+  (let [store (mem/store)
+        w (-> (ws/workspace "acme" "alice" 100)
+              (ws/create-file "plan" "root" {} "alice"))
+        r (object/write-item w store "plan" "alice" "日本語" {:object-ref "k"})]
+    (is (:ok? r))
+    (is (= 9 (:drive.workspace/used-bytes (:workspace r)))
+        "three 3-byte codepoints, not three characters")
+    (is (= (b/utf8-encode "日本語")
+           (:bytes (object/read-item (:workspace r) store "plan" "alice")))))
+  (testing "and a write that only fits when miscounted is refused"
+    (let [store (mem/store)
+          w (-> (ws/workspace "acme" "alice" 5)
+                (ws/create-file "plan" "root" {} "alice"))
+          r (object/write-item w store "plan" "alice" "日本語" {:object-ref "k"})]
+      (is (= :quota-exceeded (:reason r)))
+      (is (= 9 (:size r))))))
+
+(deftest store-of-refuses-a-store-it-cannot-build
+  ;; A misspelled key otherwise yields a store that answers nil to every read,
+  ;; which at the call site is indistinguishable from an empty backend.
+  (testing "a missing operation"
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+         #"needs a function for each operation"
+         (object/store-of {:get-object identity :put-object identity}))))
+  (testing "a non-function under a key it needs"
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+         #"needs a function for each operation"
+         (object/store-of {:get-object identity :put-object identity
+                           :delete-object "not a function"}))))
+  (testing "a key it does not use — the typo case"
+    (is (thrown-with-msg?
+         #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+         #"a key it does not use"
+         (object/store-of {:get-object identity :put-object identity
+                           :delete-object identity :get-objects identity}))))
+  (testing "and the complete set is accepted"
+    (is (some? (object/store-of {:get-object identity :put-object identity
+                                 :delete-object identity})))))
 
 (defn- raw-array-store
   "A store written by hand rather than through `store-of`.

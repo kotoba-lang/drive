@@ -27,3 +27,23 @@ jobs:
           test -n "$compiler_src"
           node scripts/verify-kotoba.mjs target/kotoba/drive.mjs \
             target/kotoba/drive.wasm "$(dirname "$compiler_src")/runtime/browser-host.mjs"
+
+  # `clojure -M:test` takes the :clj side of every reader conditional, so the
+  # :cljs branches in drive/object_test.cljc had never run. Everything here is
+  # portable .cljc apart from drive.store.fs, which is JVM-only by construction.
+  cljs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install -g nbb
+      - run: nbb --classpath "$(clojure -Spath):src" scripts/verify-cljs.cljs
