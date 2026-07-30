@@ -16,7 +16,7 @@
     (is (= 6 (:drive.workspace/used-bytes ws)))
     (is (empty? (workspace/visible-items (workspace/trash ws "plan") "bob")))
     (testing "every version consumes quota"
-      (is (thrown? Exception
+      (is (thrown? #?(:clj Exception :cljs js/Error)
                    (workspace/add-version ws "plan" {:drive.version/id "v2"
                                                        :drive.version/object-ref "r2:v2"
                                                        :drive.version/size-bytes 5}))))))
