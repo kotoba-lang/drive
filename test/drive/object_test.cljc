@@ -410,3 +410,94 @@
         r (object/prune-versions ws store "plan" "bob" 1)]
     (is (= :not-permitted (:reason r)))
     (is (some? (object/-get-object store "obj-1")) "and nothing was deleted on the way")))
+
+;; ── content addressing: two items, one object ───────────────────────────────
+
+(deftest a-shared-reference-is-not-deleted-with-one-of-its-holders
+  ;; When a reference is derived from the bytes — a hash, a CID — two items
+  ;; holding identical content hold the same reference. Deleting it for one
+  ;; destroys the other, and nothing in this namespace can see that: it is
+  ;; given one item, and the other may be in a different workspace.
+  (let [store (mem/store)
+        w (-> (ws/workspace "acme" "alice" 100000)
+              (ws/create-file "a" "root" {:drive/title "A"} "alice")
+              (ws/create-file "b" "root" {:drive/title "B"} "alice"))
+        w (:workspace (object/write-item w store "a" "alice" bytes-a
+                                         {:object-ref "cid-same"}))
+        w (:workspace (object/write-item w store "b" "alice" bytes-a
+                                         {:object-ref "cid-same"}))
+        ;; Purging A while B still points at the same object.
+        r (object/forget-item w store "a" "alice" {:keep-ref? #{"cid-same"}})]
+    (is (:ok? r))
+    (is (= 0 (:deleted r)))
+    (is (= 1 (:kept r)) "left alone, and said so")
+    ;; A lost its reference and its quota came back…
+    (is (nil? (:drive/object-ref (ws/item (:workspace r) "a"))))
+    (is (pos? (:freed-bytes r)))
+    ;; …and B can still be read, which is the whole point.
+    (is (:ok? (object/read-item (:workspace r) store "b" "alice")))
+    (is (= bytes-a (:bytes (object/read-item (:workspace r) store "b" "alice"))))))
+
+(deftest without-the-predicate-nothing-changes
+  ;; Documents use uuid references, where no two items ever share one. The
+  ;; default has to stay exactly what it was.
+  (let [{:keys [ws store]} (fixture)
+        r (object/forget-item ws store "plan" "alice")]
+    (is (= 1 (:deleted r)))
+    (is (= 0 (:kept r)))
+    (is (not (:ok? (object/read-item (:workspace r) store "plan" "alice"))))))
+
+(deftest the-predicate-is-asked-per-reference
+  ;; A document with several versions may share some objects and not others.
+  (let [store (mem/store)
+        w (-> (ws/workspace "acme" "alice" 100000)
+              (ws/create-file "a" "root" {:drive/title "A"} "alice"))
+        w (:workspace (object/write-item w store "a" "alice" bytes-a
+                                         {:object-ref "cid-shared"}))
+        w (:workspace (object/write-item w store "a" "alice" bytes-b
+                                         {:object-ref "cid-mine"}))
+        r (object/forget-item w store "a" "alice" {:keep-ref? #{"cid-shared"}})]
+    (is (= 1 (:deleted r)))
+    (is (= 1 (:kept r)))))
+
+(deftest identical-bytes-may-share-a-reference
+  ;; What content addressing means: two items holding one PDF hold one
+  ;; reference. Refusing that would make it impossible rather than safe.
+  (let [store (mem/store)
+        w (-> (ws/workspace "acme" "alice" 100000)
+              (ws/create-file "a" "root" {:drive/title "A"} "alice")
+              (ws/create-file "b" "root" {:drive/title "B"} "alice"))
+        w (:workspace (object/write-item w store "a" "alice" bytes-a
+                                         {:object-ref "cid-same"}))
+        r (object/write-item w store "b" "alice" bytes-a {:object-ref "cid-same"})]
+    (is (:ok? r))
+    (is (= bytes-a (:bytes (object/read-item (:workspace r) store "b" "alice"))))
+    ;; Both items still read, which is the thing that would break.
+    (is (= bytes-a (:bytes (object/read-item (:workspace r) store "a" "alice"))))))
+
+(deftest different-bytes-may-not-take-a-reference-that-is-in-use
+  ;; The guard this relaxes still has to hold. Filing new content under an
+  ;; existing reference replaces an earlier version's bytes while the
+  ;; history saying otherwise sits in :drive/versions — and it is checked
+  ;; against what is stored rather than taken on the caller's word, because
+  ;; a caller trusted to say "this is content-addressed" is trusted with
+  ;; exactly what the guard exists to not trust.
+  (let [{:keys [ws store]} (fixture)
+        w (ws/create-file ws "other" "root" {:drive/title "other"} "alice")
+        r (object/write-item w store "other" "alice" bytes-b {:object-ref "obj-1"})]
+    (is (not (:ok? r)))
+    (is (= :object-ref-already-used (:reason r)))
+    ;; And the original bytes are untouched.
+    (is (= bytes-a (:bytes (object/read-item ws store "plan" "alice"))))))
+
+(deftest a-reference-whose-object-is-gone-is-still-refused
+  ;; `same-bytes?` answers false when either side is missing, so a reference
+  ;; recorded in the history whose bytes have been pruned away cannot be
+  ;; quietly reused for something else.
+  (let [{:keys [ws store]} (fixture)
+        pruned (object/forget-item ws store "plan" "alice")
+        w (ws/create-file ws "other" "root" {:drive/title "other"} "alice")
+        r (object/write-item w store "other" "alice" bytes-b {:object-ref "obj-1"})]
+    (is (some? pruned))
+    (is (not (:ok? r)))
+    (is (= :object-ref-already-used (:reason r)))))

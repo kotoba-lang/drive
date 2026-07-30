@@ -151,6 +151,17 @@
 
 ;; ── writing ─────────────────────────────────────────────────────────────────
 
+(defn- same-bytes?
+  "Whether two byte-ish values hold the same content.
+
+  Through `kotoba.bytes/->bytes` and then `seq`, because on the JVM `=` on
+  two byte arrays compares identity: two arrays with the same contents are
+  not equal, so a naive check would answer \"different\" every time and the
+  reuse it is meant to allow would never happen."
+  [a b]
+  (and (some? a) (some? b)
+       (= (seq (b/->bytes a)) (seq (b/->bytes b)))))
+
 (defn- used-refs
   "Every object reference this workspace has ever recorded.
 
@@ -205,9 +216,20 @@
 
       (nil? object-ref)                (refuse :no-object-ref {})
 
-      (contains? (used-refs workspace) object-ref)
-      ;; silently replacing an earlier version's bytes, with the history that
-      ;; says otherwise still sitting in :drive/versions
+      ;; A reference already in use would silently replace an earlier
+      ;; version's bytes, with the history that says otherwise still sitting
+      ;; in :drive/versions — *unless* the bytes are the same bytes, which is
+      ;; what a content-derived reference means. Two items holding one PDF
+      ;; hold one reference, and refusing that would make content addressing
+      ;; impossible rather than safe.
+      ;;
+      ;; Checked rather than declared. A caller that merely *said* the
+      ;; reference was content-derived would be trusted with exactly the
+      ;; thing this guard exists to not trust; comparing against what is
+      ;; already stored needs no trust at all, and only happens on the
+      ;; collision itself.
+      (and (contains? (used-refs workspace) object-ref)
+           (not (same-bytes? bytes (-get-object store object-ref))))
       (refuse :object-ref-already-used {:object-ref object-ref})
 
       (would-exceed-quota? workspace size)
@@ -241,28 +263,49 @@
 
   Freed bytes are returned to the quota, because a workspace that counts bytes
   nobody can reach fills up and stops accepting writes for no reason anyone
-  can see."
-  [workspace store item-id principal-id]
-  (let [item (ws/item workspace item-id)]
-    (cond
-      (nil? item) (refuse :no-such-item {:item-id item-id})
+  can see.
 
-      (not (ws/can-write? workspace item-id principal-id))
-      (refuse :not-permitted {:item-id item-id :principal principal-id})
+  `:keep-ref?` is a predicate over object references that must **not** be
+  deleted from the store. It exists for content addressing: when a reference
+  is derived from the bytes — a hash, a CID — two items holding identical
+  content hold the same reference, and deleting it for one destroys the
+  other. Nothing here can see that. This function is given one item, and the
+  other may be in a different workspace entirely, so only the application
+  holding all of them can answer — and it is asked rather than assumed.
 
-      :else
-      (let [refs  (into #{} (comp (map :drive.version/object-ref) (filter some?))
-                        (:drive/versions item))
-            refs  (cond-> refs (:drive/object-ref item) (conj (:drive/object-ref item)))
-            freed (reduce + 0 (keep :drive.version/size-bytes (:drive/versions item)))]
-        (doseq [ref refs] (-delete-object store ref))
-        {:ok? true
-         :deleted (count refs)
-         :freed-bytes freed
-         :workspace (-> workspace
-                        (assoc-in [:drive.workspace/items item-id :drive/object-ref] nil)
-                        (assoc-in [:drive.workspace/items item-id :drive/versions] [])
-                        (update :drive.workspace/used-bytes #(max 0 (- % freed))))}))))
+  The item still loses the reference and the quota is still returned; what
+  changes is whether the bytes go. Without it a Drive that deduplicated by
+  content would delete a colleague's file when you emptied your trash, and
+  the failure would surface much later as a download that used to work.
+
+  `:kept` says how many were left alone, because a purge that deleted
+  nothing and reported deleting everything is indistinguishable from one
+  that worked."
+  ([workspace store item-id principal-id]
+   (forget-item workspace store item-id principal-id {}))
+  ([workspace store item-id principal-id {:keys [keep-ref?]}]
+   (let [item (ws/item workspace item-id)]
+     (cond
+       (nil? item) (refuse :no-such-item {:item-id item-id})
+
+       (not (ws/can-write? workspace item-id principal-id))
+       (refuse :not-permitted {:item-id item-id :principal principal-id})
+
+       :else
+       (let [refs  (into #{} (comp (map :drive.version/object-ref) (filter some?))
+                         (:drive/versions item))
+             refs  (cond-> refs (:drive/object-ref item) (conj (:drive/object-ref item)))
+             freed (reduce + 0 (keep :drive.version/size-bytes (:drive/versions item)))
+             deletable (remove #(and keep-ref? (keep-ref? %)) refs)]
+         (doseq [ref deletable] (-delete-object store ref))
+         {:ok? true
+          :deleted (count deletable)
+          :kept (- (count refs) (count deletable))
+          :freed-bytes freed
+          :workspace (-> workspace
+                         (assoc-in [:drive.workspace/items item-id :drive/object-ref] nil)
+                         (assoc-in [:drive.workspace/items item-id :drive/versions] [])
+                         (update :drive.workspace/used-bytes #(max 0 (- % freed))))})))))
 
 (defn prune-versions
   "Forget all but the newest `keep-count` versions of `item-id`.
