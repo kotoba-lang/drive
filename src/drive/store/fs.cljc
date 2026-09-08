@@ -13,7 +13,7 @@
   reference onto a directory would let whoever chose the reference name any
   file on the disk — including one outside the workspace, and including one it
   could then be asked to delete."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             #?(:clj [drive.object :as object]))
   #?(:clj (:import (java.io File)
                    (java.nio.file Files Path)
