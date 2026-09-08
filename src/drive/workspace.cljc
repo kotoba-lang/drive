@@ -1,7 +1,7 @@
 (ns drive.workspace
   "Portable tenant Drive metadata: hierarchy, ACL, versions, trash and quota."
   (:refer-clojure :exclude [ancestors descendants])
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [drive.model :as model]))
 
 (def permission-roles #{:owner :editor :commenter :viewer})
@@ -202,8 +202,8 @@
                      (can-read? ws (:drive/id %) principal-id))) vec))
 
 (defn search [ws principal-id query]
-  (let [needle (str/lower-case (str (or query "")))]
+  (let [needle (str/lower (str (or query "")))]
     (->> (visible-items ws principal-id)
          (filter #(or (empty? needle)
-                      (str/includes? (str/lower-case (str (:drive/title %))) needle)))
+                      (str/includes? (str/lower (str (:drive/title %))) needle)))
          (sort-by :drive/title) vec)))
