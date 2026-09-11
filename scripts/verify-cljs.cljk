@@ -1,10 +1,10 @@
-#!/usr/bin/env nbb
+#!/usr/bin/env kbb
 ;; verify-cljs.cljs — two-runtime parity for the seam.
 ;;
 ;; Everything in `drive` except `drive.store.fs` is portable .cljc, and
 ;; `drive/object_test.cljc` has carried `:cljs` branches (js/Uint8Array in
 ;; place of byte[]) since the byte contract was written. Nothing ran them:
-;; CI is `clojure -M:test`, which takes the `:clj` side of every one of those
+;; CI is `kbb -M:test`, which takes the `:clj` side of every one of those
 ;; reader conditionals. The ClojureScript half of the contract was asserted
 ;; and never executed — which is the same shape of claim the contract itself
 ;; was written to stop.
@@ -13,7 +13,7 @@
 ;; up there. `drive.store.fs` is deliberately absent: it is JVM-only by
 ;; construction (java.nio) and says so.
 ;;
-;;   nbb --classpath "$(clojure -Spath):src" scripts/verify-cljs.cljk
+;;   kbb --backend sci --classpath "$(kbb -Spath):src" scripts/verify-cljs.cljk
 
 (require '[kotoba.bytes :as b]
          '[drive.object :as object]
