@@ -2,7 +2,7 @@
 ;; The same test namespaces, on the other host. A `.cljc` library that only
 ;; ever runs on one host is a `.clj` library with extra reader conditionals.
 ;;
-;;   nbb --classpath "src:test:$(clojure -Spath)" scripts/test-cljs.cljs
+;;   nbb --classpath "src:test:$(clojure -Spath)" scripts/test-cljs.cljk
 ;;
 ;; `drive.store.fs-test` is absent here: that store is `#?(:clj …)` because it
 ;; is a filesystem, which is the correct kind of gap rather than a missing one.

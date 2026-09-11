@@ -46,4 +46,4 @@ jobs:
         with:
           node-version: '20'
       - run: npm install -g nbb
-      - run: nbb --classpath "$(clojure -Spath):src" scripts/verify-cljs.cljs
+      - run: nbb --classpath "$(clojure -Spath):src" scripts/verify-cljs.cljk

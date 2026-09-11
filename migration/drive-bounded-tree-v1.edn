@@ -1,7 +1,7 @@
 {:schema "kotoba-drive-migration/v1"
  :profile :drive/bounded-tree-v1
- :legacy {:model "src/drive/model.cljc"
-          :validation "src/drive/validate.cljc"
+ :legacy {:model "src/drive/model.cljk"
+          :validation "src/drive/validate.cljk"
           :status :retained-open-schema-oracle}
  :canonical {:model "src/drive/bounded.kotoba"
              :validation "src/drive/bounded_validate.kotoba"

@@ -13,7 +13,7 @@
 ;; up there. `drive.store.fs` is deliberately absent: it is JVM-only by
 ;; construction (java.nio) and says so.
 ;;
-;;   nbb --classpath "$(clojure -Spath):src" scripts/verify-cljs.cljs
+;;   nbb --classpath "$(clojure -Spath):src" scripts/verify-cljs.cljk
 
 (require '[kotoba.bytes :as b]
          '[drive.object :as object]
