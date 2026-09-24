@@ -1,5 +1,5 @@
 (ns drive.workspace-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [drive.workspace :as workspace]))
 
 (deftest drive-hierarchy-acl-versions-trash-and-quota
