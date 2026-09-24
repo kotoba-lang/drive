@@ -1,14 +1,14 @@
 (ns drive.store.fs-test
   "The filesystem store, and the references it will not turn into filenames."
-  (:require [clojure.java.io :as io]
+  (:require [kotoba.io :as io]
             [kotoba.test :refer [deftest is testing]]
             [drive.object :as object]
             [drive.store.fs :as fs]
             [drive.workspace]))
 
 (defn- tmp-dir []
-  (str (java.nio.file.Files/createTempDirectory
-        "drive-fs-test" (into-array java.nio.file.attribute.FileAttribute []))))
+  (str (io/temp-dir
+        "drive-fs-test")))
 
 (deftest bytes-round-trip-through-a-directory
   (let [s (fs/store (tmp-dir))]
@@ -45,9 +45,9 @@
 
 (deftest a-store-creates-its-directory
   (let [dir (str (tmp-dir) "/nested/deeper")]
-    (is (not (.exists (io/file dir))))
+    (is (not (io/exists? (io/file dir))))
     (fs/store dir)
-    (is (.exists (io/file dir)))))
+    (is (io/exists? (io/file dir)))))
 
 (deftest a-workspace-can-live-on-a-disk
   ;; the seam and a real backend, together
