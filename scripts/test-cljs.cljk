@@ -7,7 +7,7 @@
 ;; `drive.store.fs-test` is absent here: that store is `#?(:clj …)` because it
 ;; is a filesystem, which is the correct kind of gap rather than a missing one.
 
-(require '[clojure.test :as t] 'drive.model-test 'drive.workspace-test)
+(require '[kotoba.test :as t] 'drive.model-test 'drive.workspace-test)
 
 (let [{:keys [fail error]} (t/run-tests 'drive.model-test 'drive.workspace-test)]
   (when (pos? (+ (or fail 0) (or error 0)))

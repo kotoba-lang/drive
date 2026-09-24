@@ -1,7 +1,7 @@
 (ns drive.store.fs-test
   "The filesystem store, and the references it will not turn into filenames."
   (:require [clojure.java.io :as io]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [drive.object :as object]
             [drive.store.fs :as fs]
             [drive.workspace]))
