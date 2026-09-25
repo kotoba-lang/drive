@@ -4,7 +4,7 @@
   Every test here is a way the seam could be filled that reads correctly and
   hands out someone else's file. That is why the seam is in this library
   rather than in each consumer: the rules only work if there is one of them."
-  (:require [kotoba.test :refer [deftest is testing]]
+  (:require [kotoba.lang.error :as kerror] [kotoba.test :refer [deftest is testing]]
             [kotoba.bytes :as b]
             [drive.object :as object]
             [drive.store.memory :as mem]
@@ -291,18 +291,18 @@
   ;; which at the call site is indistinguishable from an empty backend.
   (testing "a missing operation"
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+         kerror/ExceptionInfo
          #"needs a function for each operation"
          (object/store-of {:get-object identity :put-object identity}))))
   (testing "a non-function under a key it needs"
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+         kerror/ExceptionInfo
          #"needs a function for each operation"
          (object/store-of {:get-object identity :put-object identity
                            :delete-object "not a function"}))))
   (testing "a key it does not use — the typo case"
     (is (thrown-with-msg?
-         #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo)
+         kerror/ExceptionInfo
          #"a key it does not use"
          (object/store-of {:get-object identity :put-object identity
                            :delete-object identity :get-objects identity}))))

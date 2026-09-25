@@ -90,9 +90,9 @@
   ;; Trashing it would hide the entire Drive by the rule above, with no way
   ;; back through any listing — every item, including the root, would be
   ;; invisible.
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (workspace/trash (tree) "root")))
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (workspace/move (tree) "root" "work"))))
 
 (deftest moving-changes-one-parent-and-two-listings
@@ -109,11 +109,11 @@
   ;; interface to ask. The result would be a subtree detached from the root:
   ;; invisible to a listing that walks down, unreachable by a breadcrumb that
   ;; walks up, and marked wrong nowhere.
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (workspace/move (tree) "work" "work")))
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (workspace/move (tree) "work" "q1")) "into its own child")
-  (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+  (is (thrown? js/Error
                (workspace/move (tree) "work" "memo")) "into a grandchild")
   ;; A file may go anywhere, because a file has no descendants.
   (is (some? (workspace/move (tree) "memo" "root"))))
